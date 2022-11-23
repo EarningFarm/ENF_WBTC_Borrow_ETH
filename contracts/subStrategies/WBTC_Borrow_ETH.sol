@@ -10,9 +10,9 @@ import "./interfaces/IWeth.sol";
 import "./interfaces/IAave.sol";
 import "./interfaces/IAavePriceOracle.sol";
 import "./interfaces/IEthLeverage.sol";
+import "./interfaces/IUniswapV3Router.sol";
 import "../interfaces/ISubStrategy.sol";
 import "../interfaces/IVault.sol";
-import "../interfaces/IExchange.sol";
 import "../interfaces/IRouter.sol";
 import "../utils/TransferHelper.sol";
 
@@ -31,8 +31,11 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
     // ETH Leverage address
     address public ethLeverage;
 
-    // Exchange address
-    address public exchange;
+    // UniV3 Router address
+    address public univ3Router;
+
+    // UniV3 Fee
+    uint24 public univ3Fee;
 
     // Price oracle address
     address public priceOracle;
@@ -61,15 +64,13 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
     // Slippages for deposit and withdraw
     uint256 public depositSlippage;
     uint256 public withdrawSlippage;
+    uint256 public swapSlippage;
 
     // Max Deposit
     uint256 public override maxDeposit;
 
     // Last Earn Block
     uint256 public lastEarnBlock;
-
-    // Block rate
-    uint256 public blockRate;
 
     // Max Loan Ratio
     uint256 public mlr;
@@ -79,14 +80,6 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
     // ETH decimal
     uint256 public constant ethDecimal = 1e18;
-
-    // WBTC-ETH Swap path
-    address[] public wbtcEthRouters;
-    bytes32[] public wbtcEthIndexes;
-
-    // ETH-WBTC Swap path
-    address[] public ethWbtcRouters;
-    bytes32[] public ethWbtcIndexes;
 
     // Fee Ratio
     uint256 public feeRatio;
@@ -102,11 +95,13 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
     event SetVault(address vault);
 
-    event SetExchange(address exchange);
+    event SetSwapInfo(address router, uint24 fee);
 
     event SetDepositSlippage(uint256 depositSlippage);
 
     event SetWithdrawSlippage(uint256 withdrawSlippage);
+
+    event SetSwapSlippage(uint256 swapSlippage);
 
     event SetHarvestGap(uint256 harvestGap);
 
@@ -124,7 +119,6 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         address _aave,
         address _vault,
         address _controller,
-        address _exchange,
         address _priceOracle,
         address _ethLeverage,
         address _feePool,
@@ -140,7 +134,6 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
         vault = _vault;
         controller = _controller;
-        exchange = _exchange;
         priceOracle = _priceOracle;
         ethLeverage = _ethLeverage;
 
@@ -149,6 +142,8 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
         // Set Max Deposit as max uin256
         maxDeposit = type(uint256).max;
+
+        swapSlippage = 200;
     }
 
     receive() external payable {}
@@ -306,29 +301,51 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         console.log("ETH Withdrawn: ", ethWithdrawn);
 
         // Withdraw WBTC from AAVE
-        uint256 ethDebt = (getDebt() * _amount) / prevAmt;
+        uint256 ethDebt = (getDebt() * _amount) / _collateralInWBTC();
         console.log("ETH repay: ", ethDebt);
 
-        uint256 ethToRepay;
+        uint256 wbtcToWithdraw;
         if (ethWithdrawn >= ethDebt) {
-            ethToRepay = ethDebt;
-            _swap(ethWbtcRouters, ethWbtcIndexes, ethWithdrawn - ethToRepay);
+            wbtcToWithdraw = _amount;
+            _swapExactInput(weth, wbtc, ethWithdrawn - ethDebt);
         } else {
-            ethToRepay = ethWithdrawn;
+            // Calculate how much WBTC to withdraw to compensate extra ETH
+            uint256 price = IAavePriceOracle(priceOracle).getAssetPrice(wbtc);
+            uint256 wbtcToSwap = ((((ethDebt - ethWithdrawn) * 1e8) / price) * (magnifier + swapSlippage)) / magnifier;
+            console.log("WBTC TO SWAP: ", wbtcToSwap, _amount);
+            require((wbtcToSwap * magnifier) / _amount < withdrawSlippage, "WITHDRAW_SLIPPAGE_EXCEED");
+
+            // Withdraw WBTC
+            uint256 amtBefore = IERC20(wbtc).balanceOf(address(this));
+            IAave(aave).withdraw(wbtc, wbtcToSwap, address(this));
+            uint256 wbtcAmt = IERC20(wbtc).balanceOf(address(this)) - amtBefore;
+
+            // Swap WBTC to ETH
+            console.log("ETH Bal: ", address(this).balance);
+            _swapExactOutput(wbtc, weth, ethDebt - ethWithdrawn, wbtcAmt);
+
+            wbtcToWithdraw = _amount - wbtcToSwap;
+
+            // Check ETH is enough
+            uint256 ethBal = address(this).balance;
+            console.log("ETH Bal: ", ethBal);
+            require(ethBal >= ethDebt, "INSUFFICIENT_ETH_SWAPPED");
+
+            if (ethBal > ethDebt) _swapExactInput(weth, wbtc, ethBal - ethDebt);
         }
 
         // Deposit WETH
-        TransferHelper.safeTransferETH(weth, ethToRepay);
+        TransferHelper.safeTransferETH(weth, ethDebt);
         // Approve WETH
         IERC20(weth).approve(aave, 0);
-        IERC20(weth).approve(aave, ethToRepay);
+        IERC20(weth).approve(aave, ethDebt);
 
         // Repay ETH to AAVE
-        IAave(aave).repay(weth, ethToRepay, 2, address(this));
+        IAave(aave).repay(weth, ethDebt, 2, address(this));
 
         uint256 wbtcBefore = IERC20(wbtc).balanceOf(address(this));
 
-        IAave(aave).withdraw(wbtc, (_amount * ethToRepay) / ethDebt, address(this));
+        IAave(aave).withdraw(wbtc, wbtcToWithdraw, address(this));
 
         uint256 withdrawn = IERC20(wbtc).balanceOf(address(this)) - wbtcBefore;
 
@@ -342,36 +359,78 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         return withdrawn;
     }
 
-    function _swap(
-        address[] memory _routers,
-        bytes32[] memory _indexes,
-        uint256 amount
+    function _swapExactInput(
+        address _from,
+        address _to,
+        uint256 _amount
     ) internal {
-        require(exchange != address(0), "EXCHANGE_NOT_SET");
+        require(univ3Router != address(0), "ROUTER_NOT_SET");
 
-        // Swap fromToken to toToken for deposit
-        for (uint256 i = 0; i < _indexes.length; i++) {
-            // If index of path is not registered, revert it
-            require(_indexes[i] != 0, "NON_REGISTERED_PATH");
+        IUniswapV3Router.ExactInputSingleParams memory params = IUniswapV3Router.ExactInputSingleParams({
+            tokenIn: _from,
+            tokenOut: _to,
+            fee: univ3Fee,
+            recipient: address(this),
+            amountIn: _amount,
+            amountOutMinimum: 0,
+            sqrtPriceLimitX96: 0
+        });
 
-            // Get fromToken Address
-            address fromToken = IRouter(_routers[i]).pathFrom(_indexes[i]);
-            // Get toToken Address
-            address toToken = IRouter(_routers[i]).pathTo(_indexes[i]);
+        uint256 output;
 
-            if (amount == 0) continue;
-
-            if (fromToken == weth) {
-                IExchange(exchange).swapExactETHInput{value: amount}(toToken, _routers[i], _indexes[i], amount);
-            } else {
-                // Approve fromToken to Exchange
-                IERC20(fromToken).approve(exchange, 0);
-                IERC20(fromToken).approve(exchange, amount);
-
-                // Call Swap on exchange
-                IExchange(exchange).swapExactTokenInput(fromToken, toToken, _routers[i], _indexes[i], amount);
-            }
+        // If fromToken is weth, no need to approve
+        if (_from != weth) {
+            // Approve token
+            IERC20(_from).approve(univ3Router, 0);
+            IERC20(_from).approve(univ3Router, _amount);
+            output = IUniswapV3Router(univ3Router).exactInputSingle(params);
+        } else {
+            output = IUniswapV3Router(univ3Router).exactInputSingle{value: _amount}(params);
         }
+
+        if (_to == weth) {
+            uint256 wad = IERC20(weth).balanceOf(address(this));
+            console.log("Weth: ", wad);
+            IWeth(weth).withdraw(wad);
+        }
+    }
+
+    function _swapExactOutput(
+        address _from,
+        address _to,
+        uint256 _amountOut,
+        uint256 _amountInMax
+    ) internal {
+        require(univ3Router != address(0), "ROUTER_NOT_SET");
+
+        IUniswapV3Router.ExactOutputSingleParams memory params = IUniswapV3Router.ExactOutputSingleParams({
+            tokenIn: _from,
+            tokenOut: _to,
+            fee: univ3Fee,
+            recipient: address(this),
+            amountOut: _amountOut,
+            amountInMaximum: _amountInMax,
+            sqrtPriceLimitX96: 0
+        });
+
+        uint256 output;
+
+        // If fromToken is weth, no need to approve
+        if (_from != weth) {
+            // Approve token
+            IERC20(_from).approve(univ3Router, 0);
+            IERC20(_from).approve(univ3Router, _amountInMax);
+            output = IUniswapV3Router(univ3Router).exactOutputSingle(params);
+        } else {
+            output = IUniswapV3Router(univ3Router).exactOutputSingle{value: _amountInMax}(params);
+        }
+
+        if (_to == weth) {
+            uint256 wad = IERC20(weth).balanceOf(address(this));
+            console.log("Weth: ", wad);
+            IWeth(weth).withdraw(wad);
+        }
+        console.log("Swap output: ", output, getBalance(_to, address(this)));
     }
 
     function getBalance(address _asset, address _account) internal view returns (uint256) {
@@ -431,7 +490,7 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         IWeth(weth).withdraw(wethAmt);
 
         // Swap ETH to STETH
-        _swap(ethWbtcRouters, ethWbtcIndexes, wethAmt);
+        _swapExactInput(weth, wbtc, wethAmt);
 
         // Deposit STETH to AAVE
         uint256 wbtcBal = IERC20(wbtc).balanceOf(address(this));
@@ -457,7 +516,7 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         IAave(aave).withdraw(wbtc, x, address(this));
 
         uint256 wbtcAmt = IERC20(wbtc).balanceOf(address(this));
-        _swap(wbtcEthRouters, wbtcEthIndexes, wbtcAmt);
+        _swapExactInput(wbtc, weth, wbtcAmt);
 
         uint256 toSend = address(this).balance;
         TransferHelper.safeTransferETH(weth, toSend);
@@ -491,7 +550,7 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         uint256 ethToRepay;
         if (ethWithdrawn >= totalDebt) {
             ethToRepay = totalDebt;
-            _swap(ethWbtcRouters, ethWbtcIndexes, ethWithdrawn - ethToRepay);
+            _swapExactInput(weth, wbtc, ethWithdrawn - ethToRepay);
         } else {
             ethToRepay = ethWithdrawn;
         }
@@ -611,6 +670,29 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
     }
 
     /**
+        Set Swap Slipage
+     */
+    function setSwapSlippage(uint256 _slippage) public onlyOwner {
+        require(_slippage < magnifier, "INVALID_SLIPPAGE");
+
+        swapSlippage = _slippage;
+
+        emit SetSwapSlippage(swapSlippage);
+    }
+
+    /**
+        Set Swap Info
+     */
+    function setSwapInfo(address _univ3Router, uint24 _univ3Fee) public onlyOwner {
+        require(_univ3Router != address(0), "INVALID_ADDRESS");
+
+        univ3Router = _univ3Router;
+        univ3Fee = _univ3Fee;
+
+        emit SetSwapInfo(univ3Router, univ3Fee);
+    }
+
+    /**
         Set Harvest Gap
      */
     function setHarvestGap(uint256 _harvestGap) public onlyOwner {
@@ -631,16 +713,6 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
     }
 
     /**
-        Set Exchange
-     */
-    function setExchange(address _exchange) public onlyOwner {
-        require(_exchange != address(0), "INVALID_ADDRESS");
-        exchange = _exchange;
-
-        emit SetExchange(exchange);
-    }
-
-    /**
         Set MLR
      */
     function setMLR(uint256 _mlr) public onlyOwner {
@@ -650,20 +722,5 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         mlr = _mlr;
 
         emit SetMLR(oldMlr, _mlr);
-    }
-
-    /**
-        Set Swap Routers
-     */
-    function setSwapPath(
-        address[] memory _wbtcEthRouters,
-        bytes32[] memory _wbtcEthIndexes,
-        address[] memory _ethWbtcRouters,
-        bytes32[] memory _ethWbtcIndexes
-    ) public onlyOwner {
-        wbtcEthRouters = _wbtcEthRouters;
-        wbtcEthIndexes = _wbtcEthIndexes;
-        ethWbtcRouters = _ethWbtcRouters;
-        ethWbtcIndexes = _ethWbtcIndexes;
     }
 }

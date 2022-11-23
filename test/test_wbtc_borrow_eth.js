@@ -115,7 +115,6 @@ describe("ENF Vault test", async () => {
       aave,
       vault.address,
       controller.address,
-      exchange.address,
       aaveOracle,
       ethLeverage,
       treasury.address,
@@ -154,6 +153,8 @@ describe("ENF Vault test", async () => {
     await wbtcSS.setWithdrawSlippage(100);
     console.log("Withdraw slippage set");
 
+    await wbtcSS.setSwapInfo(uniSwapV3Router, 500);
+
     // Set CRV-WBTC to exchange
     await uniV2.addPath(uniSwapV2Router, crvUsdcPath);
 
@@ -183,8 +184,6 @@ describe("ENF Vault test", async () => {
     // await exchange.listRouter(balancerBatch.address);
     await exchange.listRouter(uniV3.address);
     await exchange.setSwapCaller(wbtcSS.address, true);
-
-    await wbtcSS.setSwapPath([curve3Pool.address], [index1], [curve3Pool.address], [index0]);
   });
 
   it("Vault Deployed", async () => {
@@ -313,56 +312,12 @@ describe("ENF Vault test", async () => {
   //     await network.provider.send("evm_mine");
   // })
 
-  ////////////////////////////////////////////////
-  //              EMERGENCY WITHDRAW            //
-  ////////////////////////////////////////////////
-  it("Emergency Withdraw by non-owner will be reverted", async () => {
-    await expect(wbtcSS.connect(alice).emergencyWithdraw()).to.be.revertedWith("Ownable: caller is not the owner");
-  });
-
-  it("Emergency Withdraw", async () => {
-    // Read Total Assets
-    let total = await vault.totalAssets();
-    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
-    let ownerBal = await wbtcContract(deployer).balanceOf(deployer.address);
-    console.log(`\tOwner WBTC Balance: ${toWBTC(ownerBal)}`);
-
-    await wbtcSS.emergencyWithdraw();
-
-    total = await vault.totalAssets();
-    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
-    ownerBal = await wbtcContract(deployer).balanceOf(deployer.address);
-    console.log(`\tOwner WBTC Balance: ${toWBTC(ownerBal)}`);
-  });
-
-  /////////////////////////////////////////////////
-  //               OWNER DEPOSIT                 //
-  /////////////////////////////////////////////////
-  it("Owner deposit will be reverted", async () => {
-    await expect(wbtcSS.connect(alice).ownerDeposit(fromWBTC(100))).to.revertedWith("Ownable: caller is not the owner");
-  });
-
-  it("Owner Deposit", async () => {
-    // Approve to deposit approver
-    await wbtcContract(deployer).approve(wbtcSS.address, fromWBTC(0.1));
-
-    await wbtcSS.connect(deployer).ownerDeposit(fromWBTC(0.1));
-
-    // Read Total Assets
-    const total = await wbtcSS.totalAssets(true);
-    console.log(`\n\tTotal WBTC Balance: ${toWBTC(total)}`);
-  });
-
-  it("Owner Deposit", async () => {
-    // Approve to deposit approver
-    await wbtcContract(deployer).approve(wbtcSS.address, fromWBTC(0.1));
-
-    await wbtcSS.connect(deployer).ownerDeposit(fromWBTC(0.1));
-
-    // Read Total Assets
-    const total = await wbtcSS.totalAssets(true);
-    console.log(`\n\tTotal WBTC Balance: ${toWBTC(total)}`);
-  });
+  // ////////////////////////////////////////////////
+  // //              EMERGENCY WITHDRAW            //
+  // ////////////////////////////////////////////////
+  // it("Emergency Withdraw by non-owner will be reverted", async () => {
+  //   await expect(wbtcSS.connect(alice).emergencyWithdraw()).to.be.revertedWith("Ownable: caller is not the owner");
+  // });
 
   // it("Emergency Withdraw", async () => {
   //   // Read Total Assets
@@ -379,25 +334,69 @@ describe("ENF Vault test", async () => {
   //   console.log(`\tOwner WBTC Balance: ${toWBTC(ownerBal)}`);
   // });
 
-  it("Harvest", async () => {
-    // Read Total Assets
-    let total = await vault.totalAssets();
-    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+  // /////////////////////////////////////////////////
+  // //               OWNER DEPOSIT                 //
+  // /////////////////////////////////////////////////
+  // it("Owner deposit will be reverted", async () => {
+  //   await expect(wbtcSS.connect(alice).ownerDeposit(fromWBTC(100))).to.revertedWith("Ownable: caller is not the owner");
+  // });
 
-    await wbtcSS.harvest();
+  // it("Owner Deposit", async () => {
+  //   // Approve to deposit approver
+  //   await wbtcContract(deployer).approve(wbtcSS.address, fromWBTC(0.1));
 
-    total = await vault.totalAssets();
-    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
-  });
+  //   await wbtcSS.connect(deployer).ownerDeposit(fromWBTC(0.1));
 
-  it("Harvest", async () => {
-    // Read Total Assets
-    let total = await vault.totalAssets();
-    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+  //   // Read Total Assets
+  //   const total = await wbtcSS.totalAssets(true);
+  //   console.log(`\n\tTotal WBTC Balance: ${toWBTC(total)}`);
+  // });
 
-    await wbtcSS.harvest();
+  // it("Owner Deposit", async () => {
+  //   // Approve to deposit approver
+  //   await wbtcContract(deployer).approve(wbtcSS.address, fromWBTC(0.1));
 
-    total = await vault.totalAssets();
-    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
-  });
+  //   await wbtcSS.connect(deployer).ownerDeposit(fromWBTC(0.1));
+
+  //   // Read Total Assets
+  //   const total = await wbtcSS.totalAssets(true);
+  //   console.log(`\n\tTotal WBTC Balance: ${toWBTC(total)}`);
+  // });
+
+  // // it("Emergency Withdraw", async () => {
+  // //   // Read Total Assets
+  // //   let total = await vault.totalAssets();
+  // //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+  // //   let ownerBal = await wbtcContract(deployer).balanceOf(deployer.address);
+  // //   console.log(`\tOwner WBTC Balance: ${toWBTC(ownerBal)}`);
+
+  // //   await wbtcSS.emergencyWithdraw();
+
+  // //   total = await vault.totalAssets();
+  // //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+  // //   ownerBal = await wbtcContract(deployer).balanceOf(deployer.address);
+  // //   console.log(`\tOwner WBTC Balance: ${toWBTC(ownerBal)}`);
+  // // });
+
+  // it("Harvest", async () => {
+  //   // Read Total Assets
+  //   let total = await vault.totalAssets();
+  //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+
+  //   await wbtcSS.harvest();
+
+  //   total = await vault.totalAssets();
+  //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+  // });
+
+  // it("Harvest", async () => {
+  //   // Read Total Assets
+  //   let total = await vault.totalAssets();
+  //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+
+  //   await wbtcSS.harvest();
+
+  //   total = await vault.totalAssets();
+  //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+  // });
 });
