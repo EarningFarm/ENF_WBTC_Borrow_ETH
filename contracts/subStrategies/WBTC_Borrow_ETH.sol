@@ -447,32 +447,21 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
     /**
         Raise LTV
      */
-    function raiseLTV(uint256 lt) public onlyOwner {
+    function raiseLTV() public onlyOwner {
         uint256 e = getDebt();
         uint256 st = getCollateral();
 
         require(e * magnifier < st * mlr, "NO_NEED_TO_RAISE");
 
-        uint256 x = (st * mlr - (e * magnifier)) / (magnifier - mlr);
-        uint256 y = (st * lt) / magnifier - e - 1;
-
-        if (x > y) {
-            x = y;
-        }
+        uint256 x = (st * mlr) / magnifier - e;
 
         IAave(aave).borrow(weth, x, 2, 0, address(this));
         uint256 wethAmt = IERC20(weth).balanceOf(address(this));
         IWeth(weth).withdraw(wethAmt);
 
-        // Swap ETH to STETH
-        _swapExactInput(weth, wbtc, wethAmt);
+        IEthLeverage(ethLeverage).deposit{value: wethAmt}(wethAmt, address(this));
 
-        // Deposit STETH to AAVE
-        uint256 wbtcBal = IERC20(wbtc).balanceOf(address(this));
-        IERC20(wbtc).approve(aave, 0);
-        IERC20(wbtc).approve(aave, wbtcBal);
-
-        IAave(aave).deposit(wbtc, wbtcBal, address(this), 0);
+        // Deposit ETH to ETH Leverage
 
         emit LTVUpdate(e, st, getDebt(), getCollateral());
     }

@@ -351,7 +351,7 @@ describe("ENF Vault test", async () => {
     console.log("LTV: ", debt / collateral);
 
     await wbtcSS.setMLR(6900);
-    await wbtcSS.raiseLTV(7000);
+    await wbtcSS.raiseLTV();
 
     // calculate LTV
     collateral = await wbtcSS.getCollateral();
