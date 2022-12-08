@@ -13,7 +13,7 @@ contract PriceOracle is IPriceOracle {
         wbtcOracle = _wbtcOracle;
     }
 
-    function getAssetPrice(address _asset) external view override returns (uint256) {
+    function getAssetPrice() external view override returns (uint256) {
         (, int256 ethPrice, , , ) = IChainlink(ethOracle).latestRoundData();
         (, int256 wbtcPrice, , , ) = IChainlink(wbtcOracle).latestRoundData();
 

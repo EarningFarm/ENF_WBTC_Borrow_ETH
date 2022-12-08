@@ -1,7 +1,7 @@
 const { ethers } = require("hardhat");
 const { utils } = require("ethers");
 
-const { usdcContract, depositApproverContract } = require("../test/externalContracts");
+const { usdcContract, depositApproverContract, wbtcContract } = require("../test/externalContracts");
 const address = require("../scripts/address.json");
 const depositApprover = address["DepositApprover address"];
 
@@ -9,29 +9,29 @@ function toEth(num) {
   return utils.formatEther(num);
 }
 
-function toUSDC(num) {
-  return utils.formatUnits(num, 6);
+function toWBTC(num) {
+  return utils.formatUnits(num, 8);
 }
 
 function fromEth(num) {
   return utils.parseEther(num.toString());
 }
 
-function fromUSDC(num) {
-  return utils.parseUnits(num.toString(), 6);
+function fromWBTC(num) {
+  return utils.parseUnits(num.toString(), 8);
 }
 
 async function main() {
   const [deployer] = await ethers.getSigners();
 
-  const curUSDC = await usdcContract(deployer).balanceOf(deployer.address);
-  console.log(`\tUSDC of Alice: ${toUSDC(curUSDC)}`);
+  const curWBTC = await wbtcContract(deployer).balanceOf(deployer.address);
+  console.log(`\tWBTC of Alice: ${toWBTC(curWBTC)}`);
 
   // Approve to deposit approver
-  await usdcContract(deployer).approve(depositApprover, fromUSDC(100));
+  await wbtcContract(deployer).approve(depositApprover, fromWBTC(0.01));
 
   // Deposit
-  await depositApproverContract(deployer, depositApprover).deposit(fromUSDC(100));
+  await depositApproverContract(deployer, depositApprover).deposit(fromWBTC(0.01));
 }
 
 main();

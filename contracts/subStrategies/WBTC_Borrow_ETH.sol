@@ -63,7 +63,11 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
     // Slippages for deposit and withdraw
     uint256 public depositSlippage;
+
     uint256 public withdrawSlippage;
+
+    uint256 public leverageSlippage;
+
     uint256 public swapSlippage;
 
     // Max Deposit
@@ -102,6 +106,8 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
     event SetWithdrawSlippage(uint256 withdrawSlippage);
 
     event SetSwapSlippage(uint256 swapSlippage);
+
+    event SetLeverageSlippage(uint256 leverageSlippage);
 
     event SetHarvestGap(uint256 harvestGap);
 
@@ -143,6 +149,8 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         // Set Max Deposit as max uin256
         maxDeposit = type(uint256).max;
 
+        leverageSlippage = 100;
+
         swapSlippage = 200;
     }
 
@@ -171,12 +179,8 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         Internal view function of total WBTC deposited
     */
     function _totalAssets() internal view returns (uint256) {
-        // console.log("Bals: ", getCollateral(), getDebt(), _totalETH());
         uint256 ethBal = getCollateral() - getDebt() + _totalETH();
-        console.log("ETH Bal: ", ethBal);
-
         uint256 price = IAavePriceOracle(priceOracle).getAssetPrice(wbtc);
-        console.log("Price: ", price);
 
         return (ethBal * 1e8) / price;
     }
@@ -186,7 +190,6 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
     */
     function _collateralInWBTC() internal view returns (uint256) {
         uint256 price = IAavePriceOracle(priceOracle).getAssetPrice(wbtc);
-        console.log("Price: ", price);
 
         return (getCollateral() * 1e8) / price;
     }
@@ -197,7 +200,7 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
     function _totalETH() internal view returns (uint256) {
         uint256 lpBal = IERC20(ethLeverage).balanceOf(address(this));
         uint256 totalETH = IEthLeverage(ethLeverage).convertToAssets(lpBal);
-        // console.log("Total ETH: ", totalETH);
+
         return totalETH;
     }
 
@@ -224,17 +227,11 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
         // Get WBTC Collateral
         uint256 wbtcCol = getCollateral();
-        console.log("WBTC: ", wbtcCol);
 
         // Deposit WBTC
         IERC20(wbtc).approve(aave, 0);
         IERC20(wbtc).approve(aave, _amount);
         IAave(aave).deposit(wbtc, _amount, address(this), 0);
-        console.log(
-            "WBTC: ",
-            getCollateral(),
-            (getCollateral() * 1e18) / (IAavePriceOracle(priceOracle).getAssetPrice(wbtc))
-        );
 
         if (getCollateral() == 0) {
             IAave(aave).setUserUseReserveAsCollateral(wbtc, true);
@@ -244,20 +241,17 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         uint256 ethToBorrow;
         uint256 price = IAavePriceOracle(priceOracle).getAssetPrice(wbtc);
         if (wbtcCol == 0) {
-            console.log("Price: ", price);
             ethToBorrow = (price * mlr * wbtcAmt) / magnifier / wbtcDecimal;
         } else {
             uint256 ethDebt = getDebt();
             ethToBorrow = (ethDebt * wbtcAmt * price) / wbtcCol / wbtcDecimal;
         }
-        console.log("ETH To Borrow: ", ethToBorrow);
 
         // Borrow ETH from AAVE
         IAave(aave).borrow(weth, ethToBorrow, 2, 0, address(this));
 
         uint256 ethAmt = IERC20(weth).balanceOf(address(this));
         IWeth(weth).withdraw(ethAmt);
-        console.log("ETH Amount: ", ethAmt);
 
         // Deposit to ETH Leverage SS
         IEthLeverage(ethLeverage).deposit{value: ethAmt}(ethAmt, address(this));
@@ -265,7 +259,6 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         // Get new total assets amount
         uint256 newAmt = _totalAssets();
 
-        console.log("Prev Amt: ", prevAmt, newAmt);
         // Deposited amt
         uint256 deposited = newAmt - prevAmt;
         uint256 minOutput = (_amount * (magnifier - depositSlippage)) / magnifier;
@@ -290,7 +283,6 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
         // Calculate how much eth to be withdrawn from Leverage SS
         uint256 ethWithdraw = (_totalETH() * _amount) / prevAmt;
-        console.log("ETH Withdraw: ", ethWithdraw);
 
         uint256 ethBefore = address(this).balance;
 
@@ -298,11 +290,9 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         IEthLeverage(ethLeverage).withdraw(ethWithdraw, address(this));
 
         uint256 ethWithdrawn = address(this).balance - ethBefore;
-        console.log("ETH Withdrawn: ", ethWithdrawn);
 
         // Withdraw WBTC from AAVE
         uint256 ethDebt = (getDebt() * _amount) / _collateralInWBTC();
-        console.log("ETH repay: ", ethDebt);
 
         uint256 wbtcToWithdraw;
         if (ethWithdrawn >= ethDebt) {
@@ -312,7 +302,6 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
             // Calculate how much WBTC to withdraw to compensate extra ETH
             uint256 price = IAavePriceOracle(priceOracle).getAssetPrice(wbtc);
             uint256 wbtcToSwap = ((((ethDebt - ethWithdrawn) * 1e8) / price) * (magnifier + swapSlippage)) / magnifier;
-            console.log("WBTC TO SWAP: ", wbtcToSwap, _amount);
             require((wbtcToSwap * magnifier) / _amount < withdrawSlippage, "WITHDRAW_SLIPPAGE_EXCEED");
 
             // Withdraw WBTC
@@ -321,14 +310,12 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
             uint256 wbtcAmt = IERC20(wbtc).balanceOf(address(this)) - amtBefore;
 
             // Swap WBTC to ETH
-            console.log("ETH Bal: ", address(this).balance);
             _swapExactOutput(wbtc, weth, ethDebt - ethWithdrawn, wbtcAmt);
 
             wbtcToWithdraw = _amount - wbtcToSwap;
 
             // Check ETH is enough
             uint256 ethBal = address(this).balance;
-            console.log("ETH Bal: ", ethBal);
             require(ethBal >= ethDebt, "INSUFFICIENT_ETH_SWAPPED");
 
             if (ethBal > ethDebt) _swapExactInput(weth, wbtc, ethBal - ethDebt);
@@ -343,18 +330,15 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         // Repay ETH to AAVE
         IAave(aave).repay(weth, ethDebt, 2, address(this));
 
-        uint256 wbtcBefore = IERC20(wbtc).balanceOf(address(this));
-
         IAave(aave).withdraw(wbtc, wbtcToWithdraw, address(this));
 
-        uint256 withdrawn = IERC20(wbtc).balanceOf(address(this)) - wbtcBefore;
+        uint256 withdrawn = IERC20(wbtc).balanceOf(address(this));
 
         uint256 minOutput = (_amount * (magnifier - withdrawSlippage)) / magnifier;
 
         require(withdrawn >= minOutput, "WITHDRAW_SLIPPAGE_TOO_BIG");
 
         TransferHelper.safeTransferToken(wbtc, controller, withdrawn);
-        console.log("Withdrawn: ", withdrawn);
 
         return withdrawn;
     }
@@ -390,7 +374,6 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
         if (_to == weth) {
             uint256 wad = IERC20(weth).balanceOf(address(this));
-            console.log("Weth: ", wad);
             IWeth(weth).withdraw(wad);
         }
     }
@@ -412,7 +395,6 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
             amountInMaximum: _amountInMax,
             sqrtPriceLimitX96: 0
         });
-
         uint256 output;
 
         // If fromToken is weth, no need to approve
@@ -427,10 +409,8 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
         if (_to == weth) {
             uint256 wad = IERC20(weth).balanceOf(address(this));
-            console.log("Weth: ", wad);
             IWeth(weth).withdraw(wad);
         }
-        console.log("Swap output: ", output, getBalance(_to, address(this)));
     }
 
     function getBalance(address _asset, address _account) internal view returns (uint256) {
@@ -448,23 +428,18 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         // uint256 ethDebt = 0;
         // Get ETH Current balance
         uint256 ethAsset = _totalETH();
-        console.log("ethAsset: ", ethAsset);
 
         require(ethAsset > ethDebt, "NOTHING_TO_HARVEST");
         uint256 feeAmt = ((ethAsset - ethDebt) * feeRatio) / magnifier;
-        console.log("Fee Amt: ", feeAmt);
 
         uint256 feePoolBal = IERC20(vault).balanceOf(feePool);
         uint256 totalEF = IERC20(vault).totalSupply();
-        console.log("ENF: ", feePoolBal, totalEF);
 
         if (totalEF == 0) return;
 
         feeAmt = feeAmt - ((feeAmt * feePoolBal) / (totalEF));
-        console.log("feeAmt: ", feeAmt);
 
         uint256 mintAmt = (feeAmt * totalEF) / (ethAsset - feeAmt);
-        console.log("Mint: ", mintAmt);
         // Mint EF token to fee pool
         IVault(vault).mint(mintAmt, feePool);
     }
@@ -511,23 +486,25 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
         require(e * magnifier > st * mlr, "NO_NEED_TO_REDUCE");
 
-        uint256 x = (e * magnifier - st * mlr) / (magnifier - mlr);
+        uint256 x = (e - (mlr * st) / magnifier);
+        uint256 toWithdraw = (x * magnifier) / (magnifier - leverageSlippage);
 
-        IAave(aave).withdraw(wbtc, x, address(this));
+        // Withdraw ETH from Leverage
+        IEthLeverage(ethLeverage).withdraw(toWithdraw, address(this));
+        uint256 ethBal = address(this).balance;
+        require(ethBal >= x, "ETH withdrawn not enough");
 
-        uint256 wbtcAmt = IERC20(wbtc).balanceOf(address(this));
-        _swapExactInput(wbtc, weth, wbtcAmt);
+        // Deposit exceed ETH
+        IEthLeverage(ethLeverage).deposit{value: ethBal - x}(ethBal - x, address(this));
 
-        uint256 toSend = address(this).balance;
-        TransferHelper.safeTransferETH(weth, toSend);
+        TransferHelper.safeTransferETH(weth, x);
 
-        uint256 wethBal = IERC20(weth).balanceOf(address(this));
         // Approve WETH to AAVE
         IERC20(weth).approve(aave, 0);
-        IERC20(weth).approve(aave, wethBal);
+        IERC20(weth).approve(aave, x);
 
         // Repay WETH to aave
-        IAave(aave).repay(weth, wethBal, 2, address(this));
+        IAave(aave).repay(weth, x, 2, address(this));
     }
 
     /**
@@ -535,17 +512,13 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
      */
     function emergencyWithdraw() public onlyOwner {
         uint256 total = _collateralInWBTC();
-        console.log("Total: ", total);
         if (total == 0) return;
 
-        console.log("Total ETH: ", _totalETH());
         IEthLeverage(ethLeverage).withdraw(_totalETH(), address(this));
         uint256 ethWithdrawn = address(this).balance;
-        console.log("ETH Withdrawn: ", ethWithdrawn);
 
         // Repay ETH
         uint256 totalDebt = getDebt();
-        console.log("Total Debt: ", totalDebt);
 
         uint256 ethToRepay;
         if (ethWithdrawn >= totalDebt) {
@@ -563,12 +536,10 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
         // Repay ETH to AAVE
         IAave(aave).repay(weth, ethToRepay, 2, address(this));
-        console.log("Debt: ", getDebt());
 
         // Withdraw WBTC
         uint256 amount = (total * ethToRepay) / totalDebt;
 
-        console.log("Amount: ", amount);
         IAave(aave).withdraw(wbtc, amount, address(this));
 
         uint256 wbtcAmt = IERC20(wbtc).balanceOf(address(this));
@@ -673,6 +644,17 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         Set Swap Slipage
      */
     function setSwapSlippage(uint256 _slippage) public onlyOwner {
+        require(_slippage < magnifier, "INVALID_SLIPPAGE");
+
+        swapSlippage = _slippage;
+
+        emit SetSwapSlippage(swapSlippage);
+    }
+
+    /**
+        Set Leverage Withdraw Slipage
+     */
+    function setLeverageSlippage(uint256 _slippage) public onlyOwner {
         require(_slippage < magnifier, "INVALID_SLIPPAGE");
 
         swapSlippage = _slippage;

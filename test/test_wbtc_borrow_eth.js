@@ -74,32 +74,6 @@ describe("ENF Vault test", async () => {
     controller = await upgrades.deployProxy(Controller, [vault.address, wbtc, treasury.address, weth]);
     console.log(`Controller deployed at: ${controller.address}\n`);
 
-    // Deploy Exchange
-    console.log("Deploying Exchange".green);
-    const Exchange = await ethers.getContractFactory("Exchange");
-    exchange = await upgrades.deployProxy(Exchange, [weth, controller.address]);
-
-    // Deploy routers
-    console.log("\nDeploying Uni V2 Router".green);
-    const UniV2 = await ethers.getContractFactory("UniswapV2");
-    uniV2 = await UniV2.deploy(weth, exchange.address);
-    console.log("Uni V2 is deployed: ", uniV2.address);
-
-    console.log("\nDeploying Uni V3 Router".green);
-    const UniV3 = await ethers.getContractFactory("UniswapV3");
-    uniV3 = await UniV3.deploy(uniSwapV3Router, exchange.address, weth);
-    console.log("Uni V3 is deployed: ", uniV3.address);
-
-    console.log("\nDeploying Balancer".green);
-    const Balancer = await ethers.getContractFactory("BalancerV2");
-    balancer = await Balancer.deploy(balancerV2Vault, exchange.address, weth);
-    console.log("Balancer V2 is Deployed: ", balancer.address);
-
-    console.log("\nDeploying Curve".green);
-    const Curve = await ethers.getContractFactory("Curve");
-    curve = await Curve.deploy(weth, exchange.address);
-    console.log("Curve is deployed: ", curve.address);
-
     // // Deploying Price oracle
     // const PriceOracle = await ethers.getContractFactory("PriceOracle");
     // priceOracle = await PriceOracle.deploy(ethOracle, wbtcOracle);
@@ -154,36 +128,6 @@ describe("ENF Vault test", async () => {
     console.log("Withdraw slippage set");
 
     await wbtcSS.setSwapInfo(uniSwapV3Router, 500);
-
-    // Set CRV-WBTC to exchange
-    await uniV2.addPath(uniSwapV2Router, crvUsdcPath);
-
-    // Set CRV-WBTC to exchange
-    await uniV2.addPath(uniSwapV2Router, crvEthPath);
-
-    // Set CRV-WBTC to exchange
-    await uniV2.addPath(uniSwapV2Router, ethUsdcPath);
-
-    // Set CRV-WBTC to CURVE
-    await curve.addCurvePool(...curveCRVETH);
-
-    console.log("\nDeploying Curve3Pool".green);
-    const Curve3Pool = await ethers.getContractFactory("Curve3Pool");
-    curve3Pool = await Curve3Pool.deploy(weth, exchange.address);
-    console.log("Curve3Pool deployed: ", curve3Pool.address);
-
-    await curve3Pool.addCurvePool(...curve3ETHWBTC);
-    await curve3Pool.addCurvePool(...curve3WBTCETH);
-    const index0 = curve3Pool.getPathIndex(...curve3ETHWBTC);
-    const index1 = curve3Pool.getPathIndex(...curve3WBTCETH);
-
-    // Set Routers to exchange
-    await exchange.listRouter(uniV2.address);
-    await exchange.listRouter(curve.address);
-    await exchange.listRouter(curve3Pool.address);
-    // await exchange.listRouter(balancerBatch.address);
-    await exchange.listRouter(uniV3.address);
-    await exchange.setSwapCaller(wbtcSS.address, true);
   });
 
   it("Vault Deployed", async () => {
@@ -270,16 +214,16 @@ describe("ENF Vault test", async () => {
   ///////////////////////////////////////////////////
   //                WITHDRAW                       //
   ///////////////////////////////////////////////////
-  it("Withdraw 0.01 WBTC", async () => {
-    await vault.connect(alice).withdraw(fromWBTC(0.01), alice.address);
-    // Read Total Assets
-    const total = await vault.totalAssets();
-    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+  // it("Withdraw 0.01 WBTC", async () => {
+  //   await vault.connect(alice).withdraw(fromWBTC(0.001), alice.address);
+  //   // Read Total Assets
+  //   const total = await vault.totalAssets();
+  //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
 
-    // Read ENF token Mint
-    const enf = await vault.balanceOf(alice.address);
-    console.log(`\tAlice ENF Balance: ${toEth(enf)}`);
-  });
+  //   // Read ENF token Mint
+  //   const enf = await vault.balanceOf(alice.address);
+  //   console.log(`\tAlice ENF Balance: ${toEth(enf)}`);
+  // });
 
   // it("Withdraw 10 WBTC will be reverted", async () => {
   //   await expect(vault.connect(alice).withdraw(fromWBTC(10), alice.address)).to.revertedWith("EXCEED_TOTAL_DEPOSIT");
@@ -399,4 +343,34 @@ describe("ENF Vault test", async () => {
   //   total = await vault.totalAssets();
   //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
   // });
+
+  it("Raise Actual LTV", async () => {
+    // calculate LTV
+    let collateral = await wbtcSS.getCollateral();
+    let debt = await wbtcSS.getDebt();
+    console.log("LTV: ", debt / collateral);
+
+    await wbtcSS.setMLR(6900);
+    await wbtcSS.raiseLTV(7000);
+
+    // calculate LTV
+    collateral = await wbtcSS.getCollateral();
+    debt = await wbtcSS.getDebt();
+    console.log("LTV: ", debt / collateral);
+  });
+
+  it("Reduce Actual LTV", async () => {
+    // calculate LTV
+    let collateral = await wbtcSS.getCollateral();
+    let debt = await wbtcSS.getDebt();
+    console.log("LTV: ", debt / collateral);
+
+    await wbtcSS.setMLR(6750);
+    await wbtcSS.reduceLTV();
+
+    // calculate LTV
+    collateral = await wbtcSS.getCollateral();
+    debt = await wbtcSS.getDebt();
+    console.log("LTV: ", debt / collateral);
+  });
 });
