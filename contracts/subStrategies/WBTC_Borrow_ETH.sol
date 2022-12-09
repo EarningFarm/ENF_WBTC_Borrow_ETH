@@ -509,6 +509,11 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         // Repay ETH
         uint256 totalDebt = getDebt();
 
+        if (totalDebt == 0) {
+            TransferHelper.safeTransferETH(owner(), ethWithdrawn);
+            return;
+        }
+
         uint256 ethToRepay;
         if (ethWithdrawn >= totalDebt) {
             ethToRepay = totalDebt;

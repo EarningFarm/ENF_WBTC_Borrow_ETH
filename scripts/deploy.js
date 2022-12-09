@@ -22,7 +22,7 @@ async function main() {
   const vault = await deployUpgradeable(deployer, "EFVault", [
     constants.wbtc,
     "ENF WBTC BORROW ETH LP",
-    "ENF_WBTCBORROWETH",
+    "ENF_WBTC_BORROW_ETH",
   ]);
 
   // Deploying Controller
