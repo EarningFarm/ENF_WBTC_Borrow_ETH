@@ -306,9 +306,13 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
             // Withdraw WBTC
             uint256 amtBefore = IERC20(wbtc).balanceOf(address(this));
+            
+            if (wbtcToSwap < 1000) wbtcToSwap = 1000;
+
             IAave(aave).withdraw(wbtc, wbtcToSwap, address(this));
             uint256 wbtcAmt = IERC20(wbtc).balanceOf(address(this)) - amtBefore;
-
+            console.log("WBTC: ", wbtcAmt, price, ethDebt - ethWithdrawn);
+            
             // Swap WBTC to ETH
             _swapExactOutput(wbtc, weth, ethDebt - ethWithdrawn, wbtcAmt);
 
@@ -316,6 +320,7 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
             // Check ETH is enough
             uint256 ethBal = address(this).balance;
+            console.log("ethBal: ", ethBal, ethDebt);
             require(ethBal >= ethDebt, "INSUFFICIENT_ETH_SWAPPED");
 
             if (ethBal > ethDebt) _swapExactInput(weth, wbtc, ethBal - ethDebt);

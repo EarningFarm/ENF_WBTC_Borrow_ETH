@@ -211,19 +211,46 @@ describe("ENF Vault test", async () => {
     console.log(`\tAlice ENF Balance: ${toEth(enf)}`);
   });
 
+  it("Deposit 0.0000001 WBTC", async () => {
+    // Approve to deposit approver
+    await wbtcContract(alice).approve(depositApprover.address, fromWBTC(0.000001));
+
+    // Deposit
+    await depositApprover.connect(alice).deposit(fromWBTC(0.000001));
+
+    // Read Total Assets
+    const total = await vault.totalAssets();
+    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+
+    // Read ENF token Mint
+    const enf = await vault.balanceOf(alice.address);
+    console.log(`\tAlice ENF Balance: ${toEth(enf)}`);
+  });
+
   ///////////////////////////////////////////////////
   //                WITHDRAW                       //
   ///////////////////////////////////////////////////
-  // it("Withdraw 0.01 WBTC", async () => {
-  //   await vault.connect(alice).withdraw(fromWBTC(0.001), alice.address);
-  //   // Read Total Assets
-  //   const total = await vault.totalAssets();
-  //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+  it("Withdraw 0.01 WBTC", async () => {
+    await vault.connect(alice).withdraw(fromWBTC(0.0001), alice.address);
+    // Read Total Assets
+    const total = await vault.totalAssets();
+    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
 
-  //   // Read ENF token Mint
-  //   const enf = await vault.balanceOf(alice.address);
-  //   console.log(`\tAlice ENF Balance: ${toEth(enf)}`);
-  // });
+    // Read ENF token Mint
+    const enf = await vault.balanceOf(alice.address);
+    console.log(`\tAlice ENF Balance: ${toEth(enf)}`);
+  });
+
+  it("Withdraw 0.01 WBTC", async () => {
+    await vault.connect(alice).withdraw(fromWBTC(0.001), alice.address);
+    // Read Total Assets
+    const total = await vault.totalAssets();
+    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+
+    // Read ENF token Mint
+    const enf = await vault.balanceOf(alice.address);
+    console.log(`\tAlice ENF Balance: ${toEth(enf)}`);
+  });
 
   // it("Withdraw 10 WBTC will be reverted", async () => {
   //   await expect(vault.connect(alice).withdraw(fromWBTC(10), alice.address)).to.revertedWith("EXCEED_TOTAL_DEPOSIT");
@@ -344,33 +371,33 @@ describe("ENF Vault test", async () => {
   //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
   // });
 
-  it("Raise Actual LTV", async () => {
-    // calculate LTV
-    let collateral = await wbtcSS.getCollateral();
-    let debt = await wbtcSS.getDebt();
-    console.log("LTV: ", debt / collateral);
+  // it("Raise Actual LTV", async () => {
+  //   // calculate LTV
+  //   let collateral = await wbtcSS.getCollateral();
+  //   let debt = await wbtcSS.getDebt();
+  //   console.log("LTV: ", debt / collateral);
 
-    await wbtcSS.setMLR(6900);
-    await wbtcSS.raiseLTV();
+  //   await wbtcSS.setMLR(6900);
+  //   await wbtcSS.raiseLTV();
 
-    // calculate LTV
-    collateral = await wbtcSS.getCollateral();
-    debt = await wbtcSS.getDebt();
-    console.log("LTV: ", debt / collateral);
-  });
+  //   // calculate LTV
+  //   collateral = await wbtcSS.getCollateral();
+  //   debt = await wbtcSS.getDebt();
+  //   console.log("LTV: ", debt / collateral);
+  // });
 
-  it("Reduce Actual LTV", async () => {
-    // calculate LTV
-    let collateral = await wbtcSS.getCollateral();
-    let debt = await wbtcSS.getDebt();
-    console.log("LTV: ", debt / collateral);
+  // it("Reduce Actual LTV", async () => {
+  //   // calculate LTV
+  //   let collateral = await wbtcSS.getCollateral();
+  //   let debt = await wbtcSS.getDebt();
+  //   console.log("LTV: ", debt / collateral);
 
-    await wbtcSS.setMLR(6750);
-    await wbtcSS.reduceLTV();
+  //   await wbtcSS.setMLR(6750);
+  //   await wbtcSS.reduceLTV();
 
-    // calculate LTV
-    collateral = await wbtcSS.getCollateral();
-    debt = await wbtcSS.getDebt();
-    console.log("LTV: ", debt / collateral);
-  });
+  //   // calculate LTV
+  //   collateral = await wbtcSS.getCollateral();
+  //   debt = await wbtcSS.getDebt();
+  //   console.log("LTV: ", debt / collateral);
+  // });
 });
