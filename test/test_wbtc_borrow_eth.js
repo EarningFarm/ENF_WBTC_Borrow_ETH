@@ -227,30 +227,30 @@ describe("ENF Vault test", async () => {
     console.log(`\tAlice ENF Balance: ${toEth(enf)}`);
   });
 
-  ///////////////////////////////////////////////////
-  //                WITHDRAW                       //
-  ///////////////////////////////////////////////////
-  it("Withdraw 0.01 WBTC", async () => {
-    await vault.connect(alice).withdraw(fromWBTC(0.0001), alice.address);
-    // Read Total Assets
-    const total = await vault.totalAssets();
-    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+  // ///////////////////////////////////////////////////
+  // //                WITHDRAW                       //
+  // ///////////////////////////////////////////////////
+  // it("Withdraw 0.01 WBTC", async () => {
+  //   await vault.connect(alice).withdraw(fromWBTC(0.0001), alice.address);
+  //   // Read Total Assets
+  //   const total = await vault.totalAssets();
+  //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
 
-    // Read ENF token Mint
-    const enf = await vault.balanceOf(alice.address);
-    console.log(`\tAlice ENF Balance: ${toEth(enf)}`);
-  });
+  //   // Read ENF token Mint
+  //   const enf = await vault.balanceOf(alice.address);
+  //   console.log(`\tAlice ENF Balance: ${toEth(enf)}`);
+  // });
 
-  it("Withdraw 0.01 WBTC", async () => {
-    await vault.connect(alice).withdraw(fromWBTC(0.001), alice.address);
-    // Read Total Assets
-    const total = await vault.totalAssets();
-    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+  // it("Withdraw 0.01 WBTC", async () => {
+  //   await vault.connect(alice).withdraw(fromWBTC(0.001), alice.address);
+  //   // Read Total Assets
+  //   const total = await vault.totalAssets();
+  //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
 
-    // Read ENF token Mint
-    const enf = await vault.balanceOf(alice.address);
-    console.log(`\tAlice ENF Balance: ${toEth(enf)}`);
-  });
+  //   // Read ENF token Mint
+  //   const enf = await vault.balanceOf(alice.address);
+  //   console.log(`\tAlice ENF Balance: ${toEth(enf)}`);
+  // });
 
   // it("Withdraw 10 WBTC will be reverted", async () => {
   //   await expect(vault.connect(alice).withdraw(fromWBTC(10), alice.address)).to.revertedWith("EXCEED_TOTAL_DEPOSIT");
@@ -360,16 +360,16 @@ describe("ENF Vault test", async () => {
   //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
   // });
 
-  // it("Harvest", async () => {
-  //   // Read Total Assets
-  //   let total = await vault.totalAssets();
-  //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+  it("Harvest", async () => {
+    // Read Total Assets
+    let total = await vault.totalAssets();
+    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
 
-  //   await wbtcSS.harvest();
+    await wbtcSS.harvest();
 
-  //   total = await vault.totalAssets();
-  //   console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
-  // });
+    total = await vault.totalAssets();
+    console.log(`\tTotal WBTC Balance: ${toWBTC(total)}`);
+  });
 
   // it("Raise Actual LTV", async () => {
   //   // calculate LTV

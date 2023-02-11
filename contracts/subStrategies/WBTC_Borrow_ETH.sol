@@ -95,7 +95,13 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
     event EmergencyWithdraw(uint256 amount);
 
+    event Harvest(uint256 prevTotal, uint256 newTotal);
+
     event SetController(address controller);
+
+    event SetFeePool(address _feePool);
+
+    event SetFeeRatio(uint256 feeRatio);
 
     event SetVault(address vault);
 
@@ -273,6 +279,7 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
      */
     function withdraw(uint256 _amount) external override onlyController returns (uint256) {
         uint256 withdrawn = _withdraw(_amount);
+        TransferHelper.safeTransferToken(wbtc, controller, withdrawn);
         return withdrawn;
     }
 
@@ -306,13 +313,13 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
 
             // Withdraw WBTC
             uint256 amtBefore = IERC20(wbtc).balanceOf(address(this));
-            
+
             if (wbtcToSwap < 1000) wbtcToSwap = 1000;
 
             IAave(aave).withdraw(wbtc, wbtcToSwap, address(this));
             uint256 wbtcAmt = IERC20(wbtc).balanceOf(address(this)) - amtBefore;
             console.log("WBTC: ", wbtcAmt, price, ethDebt - ethWithdrawn);
-            
+
             // Swap WBTC to ETH
             _swapExactOutput(wbtc, weth, ethDebt - ethWithdrawn, wbtcAmt);
 
@@ -342,8 +349,6 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         uint256 minOutput = (_amount * (magnifier - withdrawSlippage)) / magnifier;
 
         require(withdrawn >= minOutput, "WITHDRAW_SLIPPAGE_TOO_BIG");
-
-        TransferHelper.safeTransferToken(wbtc, controller, withdrawn);
 
         return withdrawn;
     }
@@ -427,6 +432,8 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         Harvest reward
      */
     function harvest() external override onlyOwner {
+        uint256 prevTotal = _totalAssets();
+
         // Get ETH Debt
         uint256 ethDebt = getDebt();
         // // For testing
@@ -435,18 +442,27 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         uint256 ethAsset = _totalETH();
 
         require(ethAsset > ethDebt, "NOTHING_TO_HARVEST");
-        uint256 feeAmt = ((ethAsset - ethDebt) * feeRatio) / magnifier;
 
-        uint256 feePoolBal = IERC20(vault).balanceOf(feePool);
-        uint256 totalEF = IERC20(vault).totalSupply();
+        uint256 harvestAmtEth = ethAsset - ethDebt;
+        uint256 price = IAavePriceOracle(priceOracle).getAssetPrice(wbtc);
+        uint256 harvestAmt = (harvestAmtEth * 1e8) / price;
+        if (harvestAmt == 0) return;
 
-        if (totalEF == 0) return;
+        // Withdraw harvset amount
+        uint256 harvested = _withdraw(harvestAmt);
+        uint256 feeAmt = (harvested * feeRatio) / magnifier;
+        console.log("Harvest: ", harvested, feeAmt);
 
-        feeAmt = feeAmt - ((feeAmt * feePoolBal) / (totalEF));
+        TransferHelper.safeTransferToken(wbtc, feePool, feeAmt);
 
-        uint256 mintAmt = (feeAmt * totalEF) / (ethAsset - feeAmt);
-        // Mint EF token to fee pool
-        IVault(vault).mint(mintAmt, feePool);
+        // Deposit Remain amount
+        uint256 wbtcRemain = IERC20(wbtc).balanceOf(address(this));
+        _deposit(wbtcRemain);
+
+        uint256 newTotal = _totalAssets();
+
+        console.log("Total: ", prevTotal, newTotal);
+        emit Harvest(prevTotal, newTotal);
     }
 
     /**
@@ -614,7 +630,18 @@ contract WBTCBorrowETH is OwnableUpgradeable, ISubStrategy {
         require(_feePool != address(0), "INVALID_ADDRESS");
         feePool = _feePool;
 
-        emit SetController(feePool);
+        emit SetFeePool(feePool);
+    }
+
+    /**
+        Set Fee Ratio
+     */
+    function setFeeRatio(uint256 _feeRatio) public onlyOwner {
+        require(_feeRatio < magnifier && _feeRatio > 0, "INVALID_FEE_RATIO");
+
+        feeRatio = _feeRatio;
+
+        emit SetFeeRatio(feeRatio);
     }
 
     /**
