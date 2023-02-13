@@ -11,6 +11,7 @@ import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
 
 import "../interfaces/IController.sol";
 import "../interfaces/IVault.sol";
+import "../interfaces/IWhitelist.sol";
 import "../utils/TransferHelper.sol";
 
 contract EFVault is IVault, Initializable, ERC20Upgradeable, OwnableUpgradeable, ReentrancyGuardUpgradeable {
@@ -27,9 +28,13 @@ contract EFVault is IVault, Initializable, ERC20Upgradeable, OwnableUpgradeable,
 
     address public subStrategy;
 
+    uint256 private assetDecimal;
+
     uint256 public maxDeposit;
 
     uint256 public maxWithdraw;
+
+    address public whiteList;
 
     bool public paused;
 
@@ -54,8 +59,15 @@ contract EFVault is IVault, Initializable, ERC20Upgradeable, OwnableUpgradeable,
 
     event SetSubStrategy(address subStrategy);
 
+    event SetWhitelist(address whiteList);
+
     modifier unPaused() {
         require(!paused, "PAUSED");
+        _;
+    }
+
+    modifier onlyAllowed() {
+        require(tx.origin == msg.sender || IWhitelist(whiteList).listed(msg.sender), "NON_LISTED_CA");
         _;
     }
 
@@ -67,14 +79,18 @@ contract EFVault is IVault, Initializable, ERC20Upgradeable, OwnableUpgradeable,
     function initialize(
         ERC20Upgradeable _asset,
         string memory _name,
-        string memory _symbol
+        string memory _symbol,
+        uint256 _assetDecimal,
+        address _whiteList
     ) public initializer {
         __ERC20_init(_name, _symbol);
         __Ownable_init();
         __ReentrancyGuard_init();
         asset = _asset;
+        assetDecimal = _assetDecimal;
         maxDeposit = type(uint256).max;
         maxWithdraw = type(uint256).max;
+        whiteList = _whiteList;
     }
 
     function deposit(uint256 assets, address receiver)
@@ -83,6 +99,7 @@ contract EFVault is IVault, Initializable, ERC20Upgradeable, OwnableUpgradeable,
         override
         nonReentrant
         unPaused
+        onlyAllowed
         returns (uint256 shares)
     {
         require(assets != 0, "ZERO_ASSETS");
@@ -115,26 +132,55 @@ contract EFVault is IVault, Initializable, ERC20Upgradeable, OwnableUpgradeable,
         else return IERC20Upgradeable(asset).balanceOf(account);
     }
 
-    function withdraw(uint256 assets, address receiver) public virtual nonReentrant unPaused returns (uint256 shares) {
+    function withdraw(uint256 assets, address receiver)
+        public
+        virtual
+        nonReentrant
+        unPaused
+        onlyAllowed
+        returns (uint256 shares)
+    {
         require(assets != 0, "ZERO_ASSETS");
         require(assets <= maxWithdraw, "EXCEED_ONE_TIME_MAX_WITHDRAW");
-
-        // Total Assets amount until now
-        uint256 totalDeposit = convertToAssets(balanceOf(msg.sender));
-
-        require(assets <= totalDeposit, "EXCEED_TOTAL_DEPOSIT");
 
         // Calculate share amount to be burnt
         shares = (totalSupply() * assets) / IController(controller).totalAssets(false);
 
+        require(balanceOf(msg.sender) >= shares, "EXCEED_TOTAL_DEPOSIT");
+
+        // Withdraw asset
+        _withdraw(assets, shares, receiver);
+    }
+
+    function redeem(uint256 shares, address receiver)
+        public
+        virtual
+        nonReentrant
+        unPaused
+        onlyAllowed
+        returns (uint256 assets)
+    {
+        require(shares > 0, "ZERO_SHARES");
+        require(shares <= balanceOf(msg.sender), "EXCEED_TOTAL_BALANCE");
+
+        assets = (shares * assetsPerShare()) / 1e26;
+
+        require(assets <= maxWithdraw, "EXCEED_ONE_TIME_MAX_WITHDRAW");
+
+        // Withdraw asset
+        _withdraw(assets, shares, receiver);
+    }
+
+    function _withdraw(
+        uint256 assets,
+        uint256 shares,
+        address receiver
+    ) internal {
         // Calls Withdraw function on controller
         (uint256 withdrawn, uint256 fee) = IController(controller).withdraw(assets, receiver);
-
         require(withdrawn > 0, "INVALID_WITHDRAWN_SHARES");
 
-        // Shares could exceed balance of caller
-        if (balanceOf(msg.sender) < shares) shares = balanceOf(msg.sender);
-
+        // Burn shares amount
         _burn(msg.sender, shares);
 
         emit Withdraw(address(asset), msg.sender, receiver, assets, shares, fee);
@@ -146,6 +192,10 @@ contract EFVault is IVault, Initializable, ERC20Upgradeable, OwnableUpgradeable,
 
     function totalAssets() public view virtual returns (uint256) {
         return IController(controller).totalAssets(true);
+    }
+
+    function assetsPerShare() internal view returns (uint256) {
+        return (IController(controller).totalAssets(false) * assetDecimal * 1e18) / totalSupply();
     }
 
     function convertToShares(uint256 assets) public view virtual returns (uint256) {
@@ -190,6 +240,13 @@ contract EFVault is IVault, Initializable, ERC20Upgradeable, OwnableUpgradeable,
         depositApprover = _approver;
 
         emit SetDepositApprover(depositApprover);
+    }
+
+    function setWhitelist(address _whitelist) public onlyOwner {
+        require(_whitelist != address(0), "INVALID_ZERO_ADDRESS");
+        whiteList = _whitelist;
+
+        emit SetWhitelist(whiteList);
     }
 
     ////////////////////////////////////////////////////////////////////
